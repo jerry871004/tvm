@@ -365,6 +365,8 @@ class Handler(server.ProjectAPIHandler):
             "nucleo_f746zg",
             "nucleo_l4r5zi",
             "stm32f746g_disco",
+            "nucleo_h743zi",
+            "stm32f429i_disc1",
         ),
     }
 

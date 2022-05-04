@@ -112,6 +112,8 @@ def test_armv7m_intrinsic(temp_dir, board, west_cmd, tvm_debug):
         "nucleo_f746zg",
         "nucleo_l4r5zi",
         "nrf5340dk_nrf5340_cpuapp",
+        "nucleo_h743zi",
+        "stm32f429i_disc1",
     ]:
         pytest.skip(msg="Platform does not support ARM v7m SIMD extension.")
 

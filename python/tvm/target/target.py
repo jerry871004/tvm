@@ -345,6 +345,8 @@ MICRO_SUPPORTED_MODELS = {
     "nrf5340dk": ["-mcpu=cortex-m33"],
     "sam3x8e": ["-mcpu=cortex-m3"],
     "stm32f746xx": ["-mcpu=cortex-m7", "-march=armv7e-m"],
+    "stm32f429i_disc1": ["-mcpu=cortex-m7", "-march=armv7e-m"],
+    "stm32f4": ["-mcpu=cortex-m7", "-march=armv7e-m"],
     "stm32l4r5zi": ["-mcpu=cortex-m4"],
     "stm32u5xx": ["-mcpu=cortex-m33"],
     "zynq_mp_r5": ["-mcpu=cortex-r5"],
