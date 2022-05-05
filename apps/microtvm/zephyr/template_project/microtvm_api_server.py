@@ -377,6 +377,9 @@ class Handler(server.ProjectAPIHandler):
                 "CONFIG_RING_BUFFER=y\n"
                 "CONFIG_UART_CONSOLE=n\n"
                 "CONFIG_UART_INTERRUPT_DRIVEN=y\n"
+                "CONFIG_MAIN_STACK_SIZE=4096\n"
+                "CONFIG_MEMC=y\n"
+                "CONFIG_SYS_HEAP_BIG_ONLY=y"
                 "\n"
             )
             f.write("# For TVMPlatformAbort().\n" "CONFIG_REBOOT=y\n" "\n")
@@ -698,8 +701,8 @@ class ZephyrSerialTransport:
         self._port = serial.Serial(port_path, baudrate=self._lookup_baud_rate(self._options))
         return server.TransportTimeouts(
             session_start_retry_timeout_sec=2.0,
-            session_start_timeout_sec=5.0,
-            session_established_timeout_sec=5.0,
+            session_start_timeout_sec=10.0,
+            session_established_timeout_sec=3000.0,
         )
 
     def close(self):
