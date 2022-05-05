@@ -274,13 +274,22 @@ void main(void) {
   gpio_pin_set(led0_pin, LED0_PIN, 1);
 #endif
 
+  k_heap_init(&tvm_heap, tvm_heap_mem, TVM_HEAP_SIZE);
   // Claim console device.
   tvm_uart = device_get_binding(DT_LABEL(DT_CHOSEN(zephyr_console)));
   uart_rx_init(&uart_rx_rbuf, tvm_uart);
 
   // Initialize microTVM RPC server, which will receive commands from the UART and execute them.
   microtvm_rpc_server_t server = MicroTVMRpcServerInit(write_serial, NULL);
-  TVMLogf("microTVM Zephyr runtime - running");
+  //
+
+  //TVMLogf("tvm_heap %p tvm_heap_mem %p %p\n", &tvm_heap, tvm_heap_mem, &tvm_heap_mem);
+  k_sleep(K_MSEC(500));
+  TVMLogf("Roger microTVM Zephyr runtime - running");
+  //printk("Roger microTVM Zephyr runtime - running");
+  //p32 = k_heap_alloc(&tvm_heap, 4, K_NO_WAIT);
+  //*p32= 0x888;
+  //TVMLogf("first k_heap_alloc() \tp32 %p *p32 %x\n", p32, *p32);
 #ifdef CONFIG_LED
   gpio_pin_set(led0_pin, LED0_PIN, 0);
 #endif
