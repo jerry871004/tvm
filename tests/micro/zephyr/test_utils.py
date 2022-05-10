@@ -197,7 +197,7 @@ def run_model(project):
 
 
 def generate_project(
-    temp_dir, board, west_cmd, lowered, build_config, sample, output_shape, output_type, load_cmsis
+    model_name, temp_dir, board, west_cmd, lowered, build_config, sample, output_shape, output_type, load_cmsis
 ):
     with tempfile.NamedTemporaryFile() as tar_temp_file:
         with tarfile.open(tar_temp_file.name, "w:gz") as tf:
@@ -209,9 +209,14 @@ def generate_project(
                     tf.add(
                         model_files_path, arcname=os.path.relpath(model_files_path, tar_temp_dir)
                     )
-                header_path = generate_c_interface_header(
-                    lowered.libmod_name, ["input_1"], ["Identity"], [], [], 0, model_files_path
-                )
+                if model_name == "yolov5":
+                    header_path = generate_c_interface_header(
+                        lowered.libmod_name, ["serving_default_input_1_0_int8"], ["StatefulPartitionedCall_0_int8"], [], {}, [], 0, model_files_path
+                    )
+                else:
+                    header_path = generate_c_interface_header(
+                        lowered.libmod_name, ["input_1"], ["Identity"], [], {}, [], 0, model_files_path
+                    )
                 tf.add(header_path, arcname=os.path.relpath(header_path, tar_temp_dir))
 
             create_header_file("input_data", sample, "include", tf)
