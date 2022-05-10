@@ -20,7 +20,7 @@
 #include <assert.h>
 #include <float.h>
 #include <kernel.h>
-#include <power/reboot.h>
+#include <sys/reboot.h>
 #include <stdio.h>
 #include <string.h>
 #include <tvm/runtime/c_runtime_api.h>
@@ -40,7 +40,8 @@
 
 // WORKSPACE_SIZE defined in Project API Makefile
 
-static uint8_t g_aot_memory[WORKSPACE_SIZE];
+__attribute__((section("SDRAM2"))) static uint8_t g_aot_memory[WORKSPACE_SIZE];
+
 tvm_workspace_t app_workspace;
 
 // Transport Commands.
@@ -174,11 +175,19 @@ static uint8_t g_cmd_buf[128];
 static size_t g_cmd_buf_ind;
 
 void TVMInfer() {
+  /*
   struct tvmgen_default_inputs inputs = {
       .input_1 = input_data,
   };
   struct tvmgen_default_outputs outputs = {
       .Identity = output_data,
+  };*/
+
+  struct tvmgen_default_inputs inputs = {
+      .serving_default_input_1_0_int8 = input_data,
+  };
+  struct tvmgen_default_outputs outputs = {
+      .StatefulPartitionedCall_0_int8 = output_data,
   };
 
   StackMemoryManager_Init(&app_workspace, g_aot_memory, WORKSPACE_SIZE);
