@@ -44,6 +44,6 @@ target_include_directories(tvm_model PRIVATE ${CMAKE_SOURCE_DIR}/include crt_con
 target_compile_options(tvm_model PRIVATE -Wno-unused-variable)  # TVM-generated code tends to include lots of these.
 target_link_libraries(app PRIVATE tvm_model)
 
-file(GLOB_RECURSE app_srcs src/**.c)
+file(GLOB_RECURSE app_srcs src/**.c src/**.cpp)
 target_sources(app PRIVATE ${app_srcs})
 target_include_directories(app PRIVATE crt_config ${CMAKE_SOURCE_DIR}/include crt/include)

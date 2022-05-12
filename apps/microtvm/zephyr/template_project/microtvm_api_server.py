@@ -379,6 +379,8 @@ class Handler(server.ProjectAPIHandler):
                 "CONFIG_UART_INTERRUPT_DRIVEN=y\n"
                 "CONFIG_MAIN_STACK_SIZE=4096\n"
                 "CONFIG_MEMC=y\n"
+                "CONFIG_CPLUSPLUS=y\n"
+                "CONFIG_LIB_CPLUSPLUS=y\n"
                 "CONFIG_SYS_HEAP_BIG_ONLY=y"
                 "\n"
             )

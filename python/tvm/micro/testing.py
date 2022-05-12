@@ -58,6 +58,7 @@ def aot_transport_find_message(transport, expression: str, timeout_sec: int) -> 
     while True:
         data = _read_line(transport, timeout)
         logging.debug("new line: %s", data)
+        print("new line: %s", data)
         if expression in data:
             return data
         timeout = max(0, timeout_sec - (time.monotonic() - start_time))

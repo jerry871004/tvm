@@ -28,7 +28,6 @@
 #include <tvm/runtime/crt/stack_allocator.h>
 #include <unistd.h>
 #include <zephyr.h>
-
 #include "input_data.h"
 #include "output_data.h"
 #include "tvmgen_default.h"
@@ -68,6 +67,7 @@ void TVMLogf(const char* msg, ...) {
   size = vsprintf(buffer, msg, args);
   va_end(args);
   TVMPlatformWriteSerial(buffer, (uint32_t)size);
+  k_sleep(K_MSEC(1));
 }
 
 void TVMPlatformAbort(tvm_crt_error_t error) {
@@ -174,7 +174,10 @@ static uint8_t main_rx_buf[128];
 static uint8_t g_cmd_buf[128];
 static size_t g_cmd_buf_ind;
 
+extern int post_process(int8_t* output, char * result_str);
+
 void TVMInfer() {
+  char result_str[256];
   /*
   struct tvmgen_default_inputs inputs = {
       .input_1 = input_data,
@@ -211,6 +214,9 @@ void TVMInfer() {
     }
   }
   TVMLogf("result:%d:%d\n", max_ind, (uint32_t)(elapsed_time * 1000));
+  */
+  post_process(output_data, result_str);
+  TVMLogf("result:%d:%s\n", (uint32_t)(elapsed_time * 1000),result_str);
 }
 
 // Execute functions based on received command
@@ -218,6 +224,7 @@ void command_ready(char* command) {
   if (strncmp(command, CMD_INIT, CMD_SIZE) == 0) {
     TVMPlatformWriteSerial(CMD_WAKEUP, sizeof(CMD_WAKEUP));
   } else if (strncmp(command, CMD_INFER, CMD_SIZE) == 0) {
+    TVMLogf("Roger debug start Infer\n");
     TVMInfer();
   } else {
     TVMPlatformWriteSerial(CMD_READY, sizeof(CMD_READY));

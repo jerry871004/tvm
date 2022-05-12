@@ -189,8 +189,8 @@ def run_model(project):
 
     result_line = result_line.strip("\n")
     result_line = result_line.split(":")
-    result = int(result_line[1])
-    time = int(result_line[2])
+    time = int(result_line[1])
+    result = result_line[2]
     _LOG.info(f"Result: {result}\ttime: {time} ms")
 
     return result, time
