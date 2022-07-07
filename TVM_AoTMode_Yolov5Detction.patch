@@ -1,0 +1,845 @@
+From 83b25b7d9d2c32658671e5a3eace5fd9fb9ae6b9 Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Tue, 10 May 2022 12:26:52 +0800
+Subject: [PATCH 1/3] support AoT Mode for yolov5 model
+
+---
+ python/tvm/contrib/utils.py                   |   2 +-
+ tests/micro/zephyr/test_utils.py              |  13 +-
+ tests/micro/zephyr/test_zephyr_aot_keyword.py | 147 ++++++++++++++++
+ tests/micro/zephyr/test_zephyr_aot_yolo.py    | 157 ++++++++++++++++++
+ 4 files changed, 314 insertions(+), 5 deletions(-)
+ create mode 100644 tests/micro/zephyr/test_zephyr_aot_keyword.py
+ create mode 100644 tests/micro/zephyr/test_zephyr_aot_yolo.py
+
+diff --git a/python/tvm/contrib/utils.py b/python/tvm/contrib/utils.py
+index e2ca18277..6e0adefe2 100644
+--- a/python/tvm/contrib/utils.py
++++ b/python/tvm/contrib/utils.py
+@@ -42,7 +42,7 @@ class TempDirectory(object):
+ 
+     # When True, all TempDirectory are *NOT* deleted and instead live inside a predicable directory
+     # tree.
+-    _KEEP_FOR_DEBUG = False
++    _KEEP_FOR_DEBUG = True
+ 
+     # In debug mode, each tempdir is named after the sequence
+     _NUM_TEMPDIR_CREATED = 0
+diff --git a/tests/micro/zephyr/test_utils.py b/tests/micro/zephyr/test_utils.py
+index e0aad7c3c..79044a816 100644
+--- a/tests/micro/zephyr/test_utils.py
++++ b/tests/micro/zephyr/test_utils.py
+@@ -197,7 +197,7 @@ def run_model(project):
+ 
+ 
+ def generate_project(
+-    temp_dir, board, west_cmd, lowered, build_config, sample, output_shape, output_type, load_cmsis
++    model_name, temp_dir, board, west_cmd, lowered, build_config, sample, output_shape, output_type, load_cmsis
+ ):
+     with tempfile.NamedTemporaryFile() as tar_temp_file:
+         with tarfile.open(tar_temp_file.name, "w:gz") as tf:
+@@ -209,9 +209,14 @@ def generate_project(
+                     tf.add(
+                         model_files_path, arcname=os.path.relpath(model_files_path, tar_temp_dir)
+                     )
+-                header_path = generate_c_interface_header(
+-                    lowered.libmod_name, ["input_1"], ["Identity"], [], {}, [], 0, model_files_path
+-                )
++                if model_name == "yolov5":    
++                    header_path = generate_c_interface_header(
++                        lowered.libmod_name, ["serving_default_input_1_0_int8"], ["StatefulPartitionedCall_0_int8"], [], {}, [], 0, model_files_path
++                    )
++                else:
++                    header_path = generate_c_interface_header(
++                        lowered.libmod_name, ["input_1"], ["Identity"], [], {}, [], 0, model_files_path
++                    )                       
+                 tf.add(header_path, arcname=os.path.relpath(header_path, tar_temp_dir))
+ 
+             create_header_file("input_data", sample, "include", tf)
+diff --git a/tests/micro/zephyr/test_zephyr_aot_keyword.py b/tests/micro/zephyr/test_zephyr_aot_keyword.py
+new file mode 100644
+index 000000000..d812ac98f
+--- /dev/null
++++ b/tests/micro/zephyr/test_zephyr_aot_keyword.py
+@@ -0,0 +1,147 @@
++# Licensed to the Apache Software Foundation (ASF) under one
++# or more contributor license agreements.  See the NOTICE file
++# distributed with this work for additional information
++# regarding copyright ownership.  The ASF licenses this file
++# to you under the Apache License, Version 2.0 (the
++# "License"); you may not use this file except in compliance
++# with the License.  You may obtain a copy of the License at
++#
++#   http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++import io
++import logging
++import os
++import sys
++import logging
++import pathlib
++import shutil
++import tarfile
++import tempfile
++
++import pytest
++import numpy as np
++
++import tvm
++import tvm.testing
++from tvm.micro.project_api import server
++import tvm.relay as relay
++from tvm.relay.backend import Executor, Runtime
++
++from tvm.contrib.download import download_testdata
++from tvm.micro.testing import aot_transport_init_wait, aot_transport_find_message
++
++import test_utils
++#_LOG = logging.getLogger(__name__)
++
++@tvm.testing.requires_micro
++def test_tflite(temp_dir, board, west_cmd, tvm_debug):
++    """Testing a TFLite model."""
++    model = test_utils.ZEPHYR_BOARDS[board]
++    input_shape = (1, 49, 10, 1)
++    output_shape = (1, 12)
++    build_config = {"debug": tvm_debug}
++
++    model_url = "https://github.com/tlc-pack/web-data/raw/25fe99fb00329a26bd37d3dca723da94316fd34c/testdata/microTVM/model/keyword_spotting_quant.tflite"
++    model_path = download_testdata(model_url, "keyword_spotting_quant.tflite", module="model")
++
++    # Import TFLite model
++    tflite_model_buf = open(model_path, "rb").read()
++    try:
++        import tflite
++
++        tflite_model = tflite.Model.GetRootAsModel(tflite_model_buf, 0)
++    except AttributeError:
++        import tflite.Model
++
++        tflite_model = tflite.Model.Model.GetRootAsModel(tflite_model_buf, 0)
++
++    # Load TFLite model and convert to Relay
++    relay_mod, params = relay.frontend.from_tflite(
++        tflite_model, shape_dict={"input_1": input_shape}, dtype_dict={"input_1 ": "int8"}
++    )
++
++    target = tvm.target.target.micro(model)
++    executor = Executor(
++        "aot", {"unpacked-api": True, "interface-api": "c", "workspace-byte-alignment": 4}
++    )
++    runtime = Runtime("crt")
++    with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
++        lowered = relay.build(relay_mod, target, params=params, runtime=runtime, executor=executor)
++
++    sample_url = "https://github.com/tlc-pack/web-data/raw/967fc387dadb272c5a7f8c3461d34c060100dbf1/testdata/microTVM/data/keyword_spotting_int8_6.pyc.npy"
++    sample_path = download_testdata(sample_url, "keyword_spotting_int8_6.pyc.npy", module="data")
++    sample = np.load(sample_path)
++    temp_dir_path = '/home/roger/tvm/tvm_workspace'
++    if os.path.isdir(temp_dir_path):
++        shutil.rmtree(temp_dir_path)
++    temp_dir=tvm.contrib.utils.TempDirectory(custom_path=temp_dir_path)
++    temp_dir.set_keep_for_debug(True)   #not work, debugging
++
++    project, _ = test_utils.generate_project(
++        "keyword_spotting",
++        temp_dir,
++        board,
++        west_cmd,
++        lowered,
++        build_config,
++        sample,
++        output_shape,
++        "int8",
++        load_cmsis=True,
++    )
++
++    result, time = test_utils.run_model(project)
++    print("got result:{0}, time:{1}".format(result,time))
++    assert result > 0
++
++'''
++@tvm.testing.requires_micro
++def test_qemu_make_fail(temp_dir, board, west_cmd, tvm_debug):
++    """Testing QEMU make fail."""
++    if board not in ["qemu_x86", "mps2_an521", "mps3_an547"]:
++        pytest.skip(msg="Only for QEMU targets.")
++
++    model = test_utils.ZEPHYR_BOARDS[board]
++    build_config = {"debug": tvm_debug}
++    shape = (10,)
++    dtype = "float32"
++
++    # Construct Relay program.
++    x = relay.var("x", relay.TensorType(shape=shape, dtype=dtype))
++    xx = relay.multiply(x, x)
++    z = relay.add(xx, relay.const(np.ones(shape=shape, dtype=dtype)))
++    func = relay.Function([x], z)
++    ir_mod = tvm.IRModule.from_expr(func)
++
++    target = tvm.target.target.micro(model)
++    executor = Executor("aot")
++    runtime = Runtime("crt")
++    with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
++        lowered = relay.build(ir_mod, target, executor=executor, runtime=runtime)
++
++    sample = np.zeros(shape=shape, dtype=dtype)
++    project, project_dir = test_utils.generate_project(
++        temp_dir, board, west_cmd, lowered, build_config, sample, shape, dtype, load_cmsis=False
++    )
++
++    file_path = (
++        pathlib.Path(project_dir) / "build" / "zephyr" / "CMakeFiles" / "run.dir" / "build.make"
++    )
++    assert file_path.is_file(), f"[{file_path}] does not exist."
++
++    # Remove a file to create make failure.
++    os.remove(file_path)
++    project.flash()
++    with pytest.raises(server.JSONRPCError) as excinfo:
++        project.transport().open()
++    assert "QEMU setup failed" in str(excinfo.value)
++'''
++
++if __name__ == "__main__":
++    sys.exit(pytest.main([__file__] + sys.argv[1:]))
+diff --git a/tests/micro/zephyr/test_zephyr_aot_yolo.py b/tests/micro/zephyr/test_zephyr_aot_yolo.py
+new file mode 100644
+index 000000000..d815ca1df
+--- /dev/null
++++ b/tests/micro/zephyr/test_zephyr_aot_yolo.py
+@@ -0,0 +1,157 @@
++# Licensed to the Apache Software Foundation (ASF) under one
++# or more contributor license agreements.  See the NOTICE file
++# distributed with this work for additional information
++# regarding copyright ownership.  The ASF licenses this file
++# to you under the Apache License, Version 2.0 (the
++# "License"); you may not use this file except in compliance
++# with the License.  You may obtain a copy of the License at
++#
++#   http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++import io
++import logging
++import os
++import sys
++import logging
++import pathlib
++import shutil
++import tarfile
++import tempfile
++
++import pytest
++import numpy as np
++
++from PIL import Image
++import tvm
++import tvm.testing
++from tvm.micro.project_api import server
++import tvm.relay as relay
++from tvm.relay.backend import Executor, Runtime
++
++from tvm.contrib.download import download_testdata
++from tvm.micro.testing import aot_transport_init_wait, aot_transport_find_message
++
++import test_utils
++#_LOG = logging.getLogger(__name__)
++
++@tvm.testing.requires_micro
++def test_tflite(temp_dir, board, west_cmd, tvm_debug):
++    """Testing a TFLite model."""
++    model = test_utils.ZEPHYR_BOARDS[board]
++    input_shape_name = "serving_default_input_1_0_int8"
++    input_shape = (1,160, 160, 3)
++    output_shape = (1, 1575,15)
++    build_config = {"debug": tvm_debug}
++
++    #model_url = "https://github.com/tlc-pack/web-data/raw/25fe99fb00329a26bd37d3dca723da94316fd34c/testdata/microTVM/model/keyword_spotting_quant.tflite"
++    #model_path = download_testdata(model_url, "keyword_spotting_quant.tflite", module="model")
++    model_path= '/home/roger/tvm/exp87-int8.tflite'
++    # Import TFLite model
++    tflite_model_buf = open(model_path, "rb").read()
++    try:
++        import tflite
++
++        tflite_model = tflite.Model.GetRootAsModel(tflite_model_buf, 0)
++    except AttributeError:
++        import tflite.Model
++
++        tflite_model = tflite.Model.Model.GetRootAsModel(tflite_model_buf, 0)
++
++    # Load TFLite model and convert to Relay
++    relay_mod, params = relay.frontend.from_tflite(
++        tflite_model, shape_dict={input_shape_name: input_shape}, dtype_dict={input_shape_name: "int8"}
++    )
++
++    target = tvm.target.target.micro(model)
++    executor = Executor(
++        "aot", {"unpacked-api": True, "interface-api": "c", "workspace-byte-alignment": 4}
++    )
++    runtime = Runtime("crt")
++    with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
++        lowered = relay.build(relay_mod, target, params=params, runtime=runtime, executor=executor)
++
++    #sample_url = "https://github.com/tlc-pack/web-data/raw/967fc387dadb272c5a7f8c3461d34c060100dbf1/testdata/microTVM/data/keyword_spotting_int8_6.pyc.npy"
++    #sample_path = download_testdata(sample_url, "keyword_spotting_int8_6.pyc.npy", module="data")
++    #sample = np.load(sample_path)
++    img_url = "https://s3.amazonaws.com/model-server/inputs/kitten.jpg"
++    img_path = download_testdata(img_url, "imagenet_cat.png", module="data")
++    # Resize it to 160x160
++    resized_image = Image.open(img_path).resize((160, 160))
++    img_data = np.asarray(resized_image).astype("int8")
++    #print(graph_mod.get_input_info())    
++    tensor_img_data = np.expand_dims(img_data, axis=0)
++    
++    temp_dir_path = '/home/roger/tvm/tvm_workspace'
++    if os.path.isdir(temp_dir_path):
++        shutil.rmtree(temp_dir_path)
++    temp_dir=tvm.contrib.utils.TempDirectory(custom_path=temp_dir_path)
++    temp_dir.set_keep_for_debug(True)   #not work, debugging
++
++    project, _ = test_utils.generate_project(
++        "yolov5",
++        temp_dir,
++        board,
++        west_cmd,
++        lowered,
++        build_config,
++        tensor_img_data,
++        output_shape,
++        "int8",
++        load_cmsis=False,
++    )
++
++    result, time = test_utils.run_model(project)
++    print("got result:{0}, time:{1}".format(result,time))
++    assert result > 0
++
++'''
++@tvm.testing.requires_micro
++def test_qemu_make_fail(temp_dir, board, west_cmd, tvm_debug):
++    """Testing QEMU make fail."""
++    if board not in ["qemu_x86", "mps2_an521", "mps3_an547"]:
++        pytest.skip(msg="Only for QEMU targets.")
++
++    model = test_utils.ZEPHYR_BOARDS[board]
++    build_config = {"debug": tvm_debug}
++    shape = (10,)
++    dtype = "float32"
++
++    # Construct Relay program.
++    x = relay.var("x", relay.TensorType(shape=shape, dtype=dtype))
++    xx = relay.multiply(x, x)
++    z = relay.add(xx, relay.const(np.ones(shape=shape, dtype=dtype)))
++    func = relay.Function([x], z)
++    ir_mod = tvm.IRModule.from_expr(func)
++
++    target = tvm.target.target.micro(model)
++    executor = Executor("aot")
++    runtime = Runtime("crt")
++    with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
++        lowered = relay.build(ir_mod, target, executor=executor, runtime=runtime)
++
++    sample = np.zeros(shape=shape, dtype=dtype)
++    project, project_dir = test_utils.generate_project(
++        temp_dir, board, west_cmd, lowered, build_config, sample, shape, dtype, load_cmsis=False
++    )
++
++    file_path = (
++        pathlib.Path(project_dir) / "build" / "zephyr" / "CMakeFiles" / "run.dir" / "build.make"
++    )
++    assert file_path.is_file(), f"[{file_path}] does not exist."
++
++    # Remove a file to create make failure.
++    os.remove(file_path)
++    project.flash()
++    with pytest.raises(server.JSONRPCError) as excinfo:
++        project.transport().open()
++    assert "QEMU setup failed" in str(excinfo.value)
++'''
++
++if __name__ == "__main__":
++    sys.exit(pytest.main([__file__] + sys.argv[1:]))
+-- 
+2.35.1
+
+
+From 57ecf52ffd67bca535b23a9ba07f8774057c8ded Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Tue, 10 May 2022 12:32:34 +0800
+Subject: [PATCH 2/3] support Using SDRAM, support zephyr 3.0, fix in/out model
+ name
+
+---
+ .../zephyr/template_project/src/aot_demo/main.c     | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/apps/microtvm/zephyr/template_project/src/aot_demo/main.c b/apps/microtvm/zephyr/template_project/src/aot_demo/main.c
+index 27d74d7ba..d64580034 100644
+--- a/apps/microtvm/zephyr/template_project/src/aot_demo/main.c
++++ b/apps/microtvm/zephyr/template_project/src/aot_demo/main.c
+@@ -20,7 +20,7 @@
+ #include <assert.h>
+ #include <float.h>
+ #include <kernel.h>
+-#include <power/reboot.h>
++#include <sys/reboot.h>
+ #include <stdio.h>
+ #include <string.h>
+ #include <tvm/runtime/c_runtime_api.h>
+@@ -40,7 +40,8 @@
+ 
+ // WORKSPACE_SIZE defined in Project API Makefile
+ 
+-static uint8_t g_aot_memory[WORKSPACE_SIZE];
++__attribute__((section("SDRAM2"))) static uint8_t g_aot_memory[WORKSPACE_SIZE];
++
+ tvm_workspace_t app_workspace;
+ 
+ // Transport Commands.
+@@ -174,11 +175,19 @@ static uint8_t g_cmd_buf[128];
+ static size_t g_cmd_buf_ind;
+ 
+ void TVMInfer() {
++  /*
+   struct tvmgen_default_inputs inputs = {
+       .input_1 = input_data,
+   };
+   struct tvmgen_default_outputs outputs = {
+       .Identity = output_data,
++  };*/
++
++  struct tvmgen_default_inputs inputs = {
++      .serving_default_input_1_0_int8 = input_data,
++  };
++  struct tvmgen_default_outputs outputs = {
++      .StatefulPartitionedCall_0_int8 = output_data,
+   };
+ 
+   StackMemoryManager_Init(&app_workspace, g_aot_memory, WORKSPACE_SIZE);
+-- 
+2.35.1
+
+
+From e51812786d99215351dd3f47c164298507cd6ca8 Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Thu, 12 May 2022 11:05:22 +0800
+Subject: [PATCH 3/3] yolov5 detect postprocess and verification
+
+---
+ .../template_project/CMakeLists.txt.template  |   2 +-
+ .../template_project/microtvm_api_server.py   |   2 +
+ .../template_project/src/aot_demo/main.c      |  13 +-
+ .../src/aot_demo/postprocess.cpp              | 214 ++++++++++++++++++
+ python/tvm/micro/testing.py                   |   1 +
+ tests/micro/zephyr/test_utils.py              |   4 +-
+ tests/micro/zephyr/test_zephyr_aot_yolo.py    |  28 ++-
+ 7 files changed, 248 insertions(+), 16 deletions(-)
+ create mode 100644 apps/microtvm/zephyr/template_project/src/aot_demo/postprocess.cpp
+
+diff --git a/apps/microtvm/zephyr/template_project/CMakeLists.txt.template b/apps/microtvm/zephyr/template_project/CMakeLists.txt.template
+index 17e9d75c7..0bd472e77 100644
+--- a/apps/microtvm/zephyr/template_project/CMakeLists.txt.template
++++ b/apps/microtvm/zephyr/template_project/CMakeLists.txt.template
+@@ -44,6 +44,6 @@ target_include_directories(tvm_model PRIVATE ${CMAKE_SOURCE_DIR}/include crt_con
+ target_compile_options(tvm_model PRIVATE -Wno-unused-variable)  # TVM-generated code tends to include lots of these.
+ target_link_libraries(app PRIVATE tvm_model)
+ 
+-file(GLOB_RECURSE app_srcs src/**.c)
++file(GLOB_RECURSE app_srcs src/**.c src/**.cpp)
+ target_sources(app PRIVATE ${app_srcs})
+ target_include_directories(app PRIVATE crt_config ${CMAKE_SOURCE_DIR}/include crt/include)
+diff --git a/apps/microtvm/zephyr/template_project/microtvm_api_server.py b/apps/microtvm/zephyr/template_project/microtvm_api_server.py
+index 7d2fbd2f8..a32f256db 100644
+--- a/apps/microtvm/zephyr/template_project/microtvm_api_server.py
++++ b/apps/microtvm/zephyr/template_project/microtvm_api_server.py
+@@ -379,6 +379,8 @@ class Handler(server.ProjectAPIHandler):
+                 "CONFIG_UART_INTERRUPT_DRIVEN=y\n"
+                 "CONFIG_MAIN_STACK_SIZE=4096\n"
+                 "CONFIG_MEMC=y\n"
++                "CONFIG_CPLUSPLUS=y\n"
++                "CONFIG_LIB_CPLUSPLUS=y\n"
+                 "CONFIG_SYS_HEAP_BIG_ONLY=y"
+                 "\n"
+             )
+diff --git a/apps/microtvm/zephyr/template_project/src/aot_demo/main.c b/apps/microtvm/zephyr/template_project/src/aot_demo/main.c
+index d64580034..080547b48 100644
+--- a/apps/microtvm/zephyr/template_project/src/aot_demo/main.c
++++ b/apps/microtvm/zephyr/template_project/src/aot_demo/main.c
+@@ -28,7 +28,6 @@
+ #include <tvm/runtime/crt/stack_allocator.h>
+ #include <unistd.h>
+ #include <zephyr.h>
+-
+ #include "input_data.h"
+ #include "output_data.h"
+ #include "tvmgen_default.h"
+@@ -68,6 +67,7 @@ void TVMLogf(const char* msg, ...) {
+   size = vsprintf(buffer, msg, args);
+   va_end(args);
+   TVMPlatformWriteSerial(buffer, (uint32_t)size);
++  k_sleep(K_MSEC(1));
+ }
+ 
+ void TVMPlatformAbort(tvm_crt_error_t error) {
+@@ -174,7 +174,10 @@ static uint8_t main_rx_buf[128];
+ static uint8_t g_cmd_buf[128];
+ static size_t g_cmd_buf_ind;
+ 
++extern int post_process(int8_t* output, char * result_str);
++
+ void TVMInfer() {
++  char result_str[256];
+   /*
+   struct tvmgen_default_inputs inputs = {
+       .input_1 = input_data,
+@@ -201,7 +204,7 @@ void TVMInfer() {
+     TVMLogf("Error: %d\n", ret_val);
+     TVMPlatformAbort(kTvmErrorPlatformCheckFailure);
+   }
+-
++  /*
+   size_t max_ind = -1;
+   float max_val = -FLT_MAX;
+   for (size_t i = 0; i < output_data_len; i++) {
+@@ -211,6 +214,9 @@ void TVMInfer() {
+     }
+   }
+   TVMLogf("result:%d:%d\n", max_ind, (uint32_t)(elapsed_time * 1000));
++  */
++  post_process(output_data, result_str);
++  TVMLogf("result:%d:%s\n", (uint32_t)(elapsed_time * 1000),result_str);
+ }
+ 
+ // Execute functions based on received command
+@@ -218,6 +224,7 @@ void command_ready(char* command) {
+   if (strncmp(command, CMD_INIT, CMD_SIZE) == 0) {
+     TVMPlatformWriteSerial(CMD_WAKEUP, sizeof(CMD_WAKEUP));
+   } else if (strncmp(command, CMD_INFER, CMD_SIZE) == 0) {
++    TVMLogf("Roger debug start Infer\n");
+     TVMInfer();
+   } else {
+     TVMPlatformWriteSerial(CMD_READY, sizeof(CMD_READY));
+@@ -255,3 +262,5 @@ void main(void) {
+   posix_exit(0);
+ #endif
+ }
++
++
+diff --git a/apps/microtvm/zephyr/template_project/src/aot_demo/postprocess.cpp b/apps/microtvm/zephyr/template_project/src/aot_demo/postprocess.cpp
+new file mode 100644
+index 000000000..57331426d
+--- /dev/null
++++ b/apps/microtvm/zephyr/template_project/src/aot_demo/postprocess.cpp
+@@ -0,0 +1,214 @@
++/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++#include <vector>
++#include <iostream>
++#include <algorithm>
++#include "math.h"
++
++struct Bbox{
++    int x1;
++    int y1;
++    int x2;
++    int y2;
++    float score;
++    int class_id;
++    Bbox(int x1_, int y1_, int x2_, int y2_, float s, int c_id) :
++    	x1(x1_), y1(y1_), x2(x2_), y2(y2_), score(s),class_id(c_id)  {};
++};
++
++
++// The name of this function is important for Arduino compatibility.
++
++std::vector<Bbox> nms(std::vector<Bbox>& vecBbox, float threshold); 
++
++#define INPUT_IMAGE_WIDTH 160
++#define INPUT_IMAGE_HEIGHT 160
++#define MODEL_IMAGE_WIDTH 160
++#define MODEL_IMAGE_HEIGHT 160
++#define NUM_CLASS 10
++#define NUM_CANDIDATE_BBOX 1575 // 75+300+1200 diff strides
++#define CON_THRED	0.5
++#define IOU_THRED	0.4
++#define DEQNT(a) (float(0.008005863055586815  * (a + 128)))   //0.004304335452616215 * (q + 128)
++#define SCORE_THRESHOLD 0.4
++#define MAX_QNT_VALUE 1.097605586051941
++inline static int clamp(float val, int min, int max)
++{
++    return val > min ? (val < max ? val : max) : min;
++}
++
++extern "C" int post_process(int8_t* output, char * result_str);
++
++#define Output_F	0
++#define DBG_LOG 1
++int post_process(int8_t* output, char * result_str)
++{
++	static uint8_t null_count = 0;
++	const int dimensions = (NUM_CLASS+5);   //our class is 10 , +5 for (xywh, conf)
++	const int rows = NUM_CANDIDATE_BBOX;
++	//std::vector<int> class_ids;
++	//std::vector<float> confidences;
++	std::vector<Bbox> boxes;
++#if Output_F
++	float* data = (float*)output;
++#else
++	int8_t* data = output;
++#endif
++
++    for (int i = 0; i < rows; i++)
++    {
++#if Output_F
++    	float confidence = data[4];
++#else
++    	float confidence = DEQNT(data[4]);
++#endif
++        if (confidence >= CON_THRED)
++        {
++#if Output_F
++        	float* classes_scores = data+5;
++//       	printf("Data: %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f\r\n",
++//					data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11], data[12], data[13], data[14]);
++#else
++        	int8_t* classes_scores = data+5;
++        	//printf("Data: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d\r\n",
++        			//data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11], data[12], data[13], data[14]);
++#endif
++			int maxClassId = -1;
++			float maxClassScore = 0;
++			for (int k = 0; k < NUM_CLASS; k++)
++			{
++#if Output_F
++				float score = classes_scores[k];
++#else
++				float score = DEQNT(classes_scores[k]);
++#endif
++				if (score > maxClassScore)
++				{
++					maxClassId = k;
++					maxClassScore = score;
++				}
++			}
++
++			if ((maxClassScore) > SCORE_THRESHOLD)
++			{
++				//confidences.push_back(confidence);
++				//class_ids.push_back(maxClassId);
++#if Output_F
++				float x = data[0];
++				float y = data[1];
++				float w = data[2];
++				float h = data[3];
++#else
++				float x = DEQNT(data[0]);
++				float y = DEQNT(data[1]);
++				float w = DEQNT(data[2]);
++				float h = DEQNT(data[3]);
++#endif
++				int x1 = (int)(clamp((x-w/2)*INPUT_IMAGE_WIDTH, 0, INPUT_IMAGE_WIDTH));
++				int y1 =  (int)(clamp((y-h/2)*INPUT_IMAGE_HEIGHT, 0, INPUT_IMAGE_HEIGHT));
++				int x2 = (int)(clamp((x+w/2)*INPUT_IMAGE_WIDTH, 0, INPUT_IMAGE_WIDTH));
++				int y2 = (int)(clamp((y+h/2)*INPUT_IMAGE_HEIGHT, 0, INPUT_IMAGE_HEIGHT));
++				Bbox box(x1, y1, x2, y2, confidence, maxClassId);
++//#if DBG_LOG
++//				sprintf(result_str,"box1(%f, %f, %f, %f) box2(%d, %d, %d, %d) (confidence: %f, class: %d)\r\n", x, y, w, h, x1, y1, x2, y2, confidence, maxClassId);
++//#endif
++				boxes.push_back(box);
++			}
++        }
++        data += dimensions;
++    }
++    uint8_t IsObject = 0;
++    int max_class_id = 0;
++    float max_confidence = 0;
++    float dist_y = 0;
++	//start to do nms for each class
++	for (int j=0;j < NUM_CLASS; j++)
++	{
++		//filter the class id
++		std::vector<Bbox> class_boxes;
++		for (int i=0; i< boxes.size();i++)
++		{
++			if (boxes[i].class_id == j)
++			  class_boxes.push_back(boxes[i]);
++		}
++		if (class_boxes.size() > 0)
++		{
++			IsObject = 1;
++			std::vector<Bbox> result;
++			result = nms(class_boxes, IOU_THRED);
++			for (int i=0; i< result.size();i++)
++			{
++#if DBG_LOG        
++				sprintf(result_str,"Boxresult[%d] x1 %d, y1 %d, x2 %d, y2 %d, confidence %f, class %d\r\n",
++						i, result[i].x1, result[i].y1, result[i].x2, result[i].y2, result[i].score, result[i].class_id);
++#endif            
++			}
++		}
++	}
++	return 0;
++}
++
++float iou(Bbox box1, Bbox box2) {
++    float area1 = (box1.x2 - box1.x1 + 1) * (box1.y2 - box1.y1 + 1);
++    float area2 = (box2.x2 - box2.x1 + 1) * (box2.y2 - box2.y1 + 1);
++
++    int x11 = std::max(box1.x1, box2.x1);
++    int y11 = std::max(box1.y1, box2.y1);
++    int x22 = std::min(box1.x2, box2.x2);
++    int y22 = std::min(box1.y2, box2.y2);
++    float intersection = (x22 - x11 + 1) * (y22 - y11 + 1);
++
++    return intersection / (area1 + area2 - intersection);
++}
++
++std::vector<Bbox> nms(std::vector<Bbox>& vecBbox, float threshold)
++{
++    auto cmpScore = [](Bbox box1, Bbox box2) {
++        return box1.score < box2.score; // 升序排列, 令score最大的box在vector末端
++    };
++    std::sort(vecBbox.begin(), vecBbox.end(), cmpScore);
++    std::vector<Bbox> pickedBbox;
++//#if DBG_LOG
++//    for (int i=0; i< vecBbox.size();i++)
++//    {
++//		printf("after sort vecBbox[%d]: x1: %d, y1: %d, x2: %d, y2: %d, confidence: %f, class: %d\r\n",
++//				i, vecBbox[i].x1, vecBbox[i].y1, vecBbox[i].x2, vecBbox[i].y2, vecBbox[i].score, vecBbox[i].class_id);
++//    }
++//#endif
++    while (vecBbox.size() > 0)
++    {
++        pickedBbox.emplace_back(vecBbox.back());
++        vecBbox.pop_back();
++//#if DBG_LOG
++//        printf("dump vecBBbox size: %d\r\n",vecBbox.size());
++//#endif
++        for (size_t i = 0; i < vecBbox.size(); i++)
++        {
++            float iou_score = iou(pickedBbox.back(), vecBbox[i]);
++//#if DBG_LOG
++//            printf("dump vecBBbox is %d, iou_score: %f\r\n", i, iou_score);
++//#endif
++            if (iou_score >= threshold)
++            {
++                vecBbox.erase(vecBbox.begin() + i);
++                i--;
++            }
++        }
++//#if DBG_LOG
++//        printf("while end and reloop\r\n");
++//#endif
++    }
++    return pickedBbox;
++}
+diff --git a/python/tvm/micro/testing.py b/python/tvm/micro/testing.py
+index 81e29a92a..25f8cbdd8 100644
+--- a/python/tvm/micro/testing.py
++++ b/python/tvm/micro/testing.py
+@@ -58,6 +58,7 @@ def aot_transport_find_message(transport, expression: str, timeout_sec: int) ->
+     while True:
+         data = _read_line(transport, timeout)
+         logging.debug("new line: %s", data)
++        print("new line: %s", data)
+         if expression in data:
+             return data
+         timeout = max(0, timeout_sec - (time.monotonic() - start_time))
+diff --git a/tests/micro/zephyr/test_utils.py b/tests/micro/zephyr/test_utils.py
+index 79044a816..76ae071ee 100644
+--- a/tests/micro/zephyr/test_utils.py
++++ b/tests/micro/zephyr/test_utils.py
+@@ -189,8 +189,8 @@ def run_model(project):
+ 
+     result_line = result_line.strip("\n")
+     result_line = result_line.split(":")
+-    result = int(result_line[1])
+-    time = int(result_line[2])
++    time = int(result_line[1])
++    result = result_line[2]
+     _LOG.info(f"Result: {result}\ttime: {time} ms")
+ 
+     return result, time
+diff --git a/tests/micro/zephyr/test_zephyr_aot_yolo.py b/tests/micro/zephyr/test_zephyr_aot_yolo.py
+index d815ca1df..d2c462327 100644
+--- a/tests/micro/zephyr/test_zephyr_aot_yolo.py
++++ b/tests/micro/zephyr/test_zephyr_aot_yolo.py
+@@ -49,9 +49,22 @@ def test_tflite(temp_dir, board, west_cmd, tvm_debug):
+     output_shape = (1, 1575,15)
+     build_config = {"debug": tvm_debug}
+ 
++    #sample_url = "https://github.com/tlc-pack/web-data/raw/967fc387dadb272c5a7f8c3461d34c060100dbf1/testdata/microTVM/data/keyword_spotting_int8_6.pyc.npy"
++    #sample_path = download_testdata(sample_url, "keyword_spotting_int8_6.pyc.npy", module="data")
++    #sample = np.load(sample_path)
++    #img_url = "https://s3.amazonaws.com/model-server/inputs/kitten.jpg"
++    #img_path = download_testdata(img_url, "imagenet_cat.png", module="data")
++    img_path = '/mnt/d/Work/tool/RS_00704.jpg'
++    # Resize it to 160x160
++    resized_image = Image.open(img_path).resize((160, 160))
++
++    img_data = np.asarray(resized_image).astype("float")
++    img_data = img_data-128
++    img_data = np.asarray(img_data).astype("int8")
++
+     #model_url = "https://github.com/tlc-pack/web-data/raw/25fe99fb00329a26bd37d3dca723da94316fd34c/testdata/microTVM/model/keyword_spotting_quant.tflite"
+     #model_path = download_testdata(model_url, "keyword_spotting_quant.tflite", module="model")
+-    model_path= '/home/roger/tvm/exp87-int8.tflite'
++    model_path= '/mnt/d/workspace/tvm_try/exp113_160-int8.tflite'
+     # Import TFLite model
+     tflite_model_buf = open(model_path, "rb").read()
+     try:
+@@ -76,14 +89,7 @@ def test_tflite(temp_dir, board, west_cmd, tvm_debug):
+     with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
+         lowered = relay.build(relay_mod, target, params=params, runtime=runtime, executor=executor)
+ 
+-    #sample_url = "https://github.com/tlc-pack/web-data/raw/967fc387dadb272c5a7f8c3461d34c060100dbf1/testdata/microTVM/data/keyword_spotting_int8_6.pyc.npy"
+-    #sample_path = download_testdata(sample_url, "keyword_spotting_int8_6.pyc.npy", module="data")
+-    #sample = np.load(sample_path)
+-    img_url = "https://s3.amazonaws.com/model-server/inputs/kitten.jpg"
+-    img_path = download_testdata(img_url, "imagenet_cat.png", module="data")
+-    # Resize it to 160x160
+-    resized_image = Image.open(img_path).resize((160, 160))
+-    img_data = np.asarray(resized_image).astype("int8")
++
+     #print(graph_mod.get_input_info())    
+     tensor_img_data = np.expand_dims(img_data, axis=0)
+     
+@@ -107,8 +113,8 @@ def test_tflite(temp_dir, board, west_cmd, tvm_debug):
+     )
+ 
+     result, time = test_utils.run_model(project)
+-    print("got result:{0}, time:{1}".format(result,time))
+-    assert result > 0
++    print("\ngot result:{0}, time:{1}\n".format(result,time))
++    assert time > 0
+ 
+ '''
+ @tvm.testing.requires_micro
+-- 
+2.35.1
+

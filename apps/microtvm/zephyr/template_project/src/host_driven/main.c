@@ -101,6 +101,7 @@ size_t TVMPlatformFormatMessage(char* out_buf, size_t out_buf_size_bytes, const 
 // Called by TVM when an internal invariant is violated, and execution cannot continue.
 void TVMPlatformAbort(tvm_crt_error_t error) {
   TVMLogf("TVMError: 0x%x", error);
+  k_sleep(K_MSEC(2000));
   sys_reboot(SYS_REBOOT_COLD);
 #ifdef CONFIG_LED
   gpio_pin_set(led0_pin, LED0_PIN, 1);
@@ -130,11 +131,20 @@ tvm_crt_error_t TVMPlatformGenerateRandom(uint8_t* buffer, size_t num_bytes) {
 }
 
 // Heap for use by TVMPlatformMemoryAllocate.
-K_HEAP_DEFINE(tvm_heap, 216 * 1024);
+//K_HEAP_DEFINE(tvm_heap, 150 * 1024);
+#define TVM_HEAP_SIZE (4096 * 1024)
+__attribute__((section("SDRAM2"))) unsigned char tvm_heap_mem[TVM_HEAP_SIZE];
+//unsigned char tvm_heap_mem[TVM_HEAP_SIZE];
+struct k_heap tvm_heap;
 
 // Called by TVM to allocate memory.
+//extern int TVMAPIErrorf(const char* msg, ...);
+//__attribute__((section("SDRAM2"))) int total_ram_count=0;
 tvm_crt_error_t TVMPlatformMemoryAllocate(size_t num_bytes, DLDevice dev, void** out_ptr) {
   *out_ptr = k_heap_alloc(&tvm_heap, num_bytes, K_NO_WAIT);
+  //total_ram_count += num_bytes;
+  //if (*out_ptr == NULL)
+  //    TVMAPIErrorf("Roger k_heap_alloc size: %d , total used %d\n",num_bytes,total_ram_count);
   return (*out_ptr == NULL) ? kTvmErrorPlatformNoMemory : kTvmErrorNoError;
 }
 
@@ -260,6 +270,8 @@ void uart_rx_init(struct ring_buf* rbuf, const struct device* dev) {
 // The main function of this application.
 extern void __stdout_hook_install(int (*hook)(int));
 void main(void) {
+  unsigned int int32=0;
+  unsigned int *p32=&int32, *p32b;
 #ifdef CONFIG_LED
   int ret;
   led0_pin = device_get_binding(LED0);
@@ -280,7 +292,7 @@ void main(void) {
   uart_rx_init(&uart_rx_rbuf, tvm_uart);
 
   // Initialize microTVM RPC server, which will receive commands from the UART and execute them.
-  microtvm_rpc_server_t server = MicroTVMRpcServerInit(write_serial, NULL);
+  microtvm_rpc_server_t server = MicroTVMRpcServerInit(write_serial, NULL);  
   //
 
   //TVMLogf("tvm_heap %p tvm_heap_mem %p %p\n", &tvm_heap, tvm_heap_mem, &tvm_heap_mem);
@@ -289,7 +301,7 @@ void main(void) {
   //printk("Roger microTVM Zephyr runtime - running");
   //p32 = k_heap_alloc(&tvm_heap, 4, K_NO_WAIT);
   //*p32= 0x888;
-  //TVMLogf("first k_heap_alloc() \tp32 %p *p32 %x\n", p32, *p32);
+  //TVMLogf("first k_heap_alloc() \tp32 %p *p32 %x\n", p32, *p32); 
 #ifdef CONFIG_LED
   gpio_pin_set(led0_pin, LED0_PIN, 0);
 #endif

@@ -1,0 +1,271 @@
+From 659ed31cc158dc308f6aa5aed7aa8913da5c4151 Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Wed, 4 May 2022 23:43:46 +0000
+Subject: [PATCH 1/7] microTVM support stm32f429i_disc1 and nucleo_h743zi
+ boards
+
+---
+ .../zephyr/template_project/boards.json         | 17 +++++++++++++++++
+ .../template_project/microtvm_api_server.py     |  2 ++
+ python/tvm/target/target.py                     |  2 ++
+ tests/micro/zephyr/test_zephyr_armv7m.py        |  2 ++
+ 4 files changed, 23 insertions(+)
+
+diff --git a/apps/microtvm/zephyr/template_project/boards.json b/apps/microtvm/zephyr/template_project/boards.json
+index aae764a82..bd62ba4b9 100644
+--- a/apps/microtvm/zephyr/template_project/boards.json
++++ b/apps/microtvm/zephyr/template_project/boards.json
+@@ -95,5 +95,22 @@
+         "fpu": true,
+         "vid_hex": "0483",
+         "pid_hex": "374b"
++    },
++    "nucleo_h743zi": {
++        "board": "nucleo_h743zi",
++        "model": "stm32H7x",
++        "is_qemu": false,
++        "fpu": true,
++        "vid_hex": "0483",
++        "pid_hex": "374e"
++    },
++    "stm32f429i_disc1": {
++        "board": "stm32f429i_disc1",
++        "model": "stm32f429i_disc1",
++        "is_qemu": false,
++        "fpu": true,
++        "vid_hex": "0483",
++        "pid_hex": "374b"
+     }
++
+ }
+diff --git a/apps/microtvm/zephyr/template_project/microtvm_api_server.py b/apps/microtvm/zephyr/template_project/microtvm_api_server.py
+index 059e76048..248a21d1c 100644
+--- a/apps/microtvm/zephyr/template_project/microtvm_api_server.py
++++ b/apps/microtvm/zephyr/template_project/microtvm_api_server.py
+@@ -365,6 +365,8 @@ class Handler(server.ProjectAPIHandler):
+             "nucleo_f746zg",
+             "nucleo_l4r5zi",
+             "stm32f746g_disco",
++            "nucleo_h743zi",
++            "stm32f429i_disc1",
+         ),
+     }
+ 
+diff --git a/python/tvm/target/target.py b/python/tvm/target/target.py
+index cecf3f478..283b24dfa 100644
+--- a/python/tvm/target/target.py
++++ b/python/tvm/target/target.py
+@@ -345,6 +345,8 @@ MICRO_SUPPORTED_MODELS = {
+     "nrf5340dk": ["-mcpu=cortex-m33"],
+     "sam3x8e": ["-mcpu=cortex-m3"],
+     "stm32f746xx": ["-mcpu=cortex-m7", "-march=armv7e-m"],
++    "stm32f429i_disc1": ["-mcpu=cortex-m7", "-march=armv7e-m"],
++    "stm32f4": ["-mcpu=cortex-m7", "-march=armv7e-m"],
+     "stm32l4r5zi": ["-mcpu=cortex-m4"],
+     "stm32u5xx": ["-mcpu=cortex-m33"],
+     "zynq_mp_r5": ["-mcpu=cortex-r5"],
+diff --git a/tests/micro/zephyr/test_zephyr_armv7m.py b/tests/micro/zephyr/test_zephyr_armv7m.py
+index 47b78994e..e32e08613 100644
+--- a/tests/micro/zephyr/test_zephyr_armv7m.py
++++ b/tests/micro/zephyr/test_zephyr_armv7m.py
+@@ -112,6 +112,8 @@ def test_armv7m_intrinsic(temp_dir, board, west_cmd, tvm_debug):
+         "nucleo_f746zg",
+         "nucleo_l4r5zi",
+         "nrf5340dk_nrf5340_cpuapp",
++        "nucleo_h743zi",
++        "stm32f429i_disc1",
+     ]:
+         pytest.skip(msg="Platform does not support ARM v7m SIMD extension.")
+ 
+-- 
+2.17.1
+
+
+From 21aa0857b4f75edf33822de7fdc48e32d1405f3e Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Wed, 4 May 2022 23:45:24 +0000
+Subject: [PATCH 2/7] support zephyr 3.0 build
+
+---
+ apps/microtvm/zephyr/template_project/src/host_driven/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/apps/microtvm/zephyr/template_project/src/host_driven/main.c b/apps/microtvm/zephyr/template_project/src/host_driven/main.c
+index 44d656028..04cb342b1 100644
+--- a/apps/microtvm/zephyr/template_project/src/host_driven/main.c
++++ b/apps/microtvm/zephyr/template_project/src/host_driven/main.c
+@@ -33,7 +33,7 @@
+ #include <drivers/uart.h>
+ #include <fatal.h>
+ #include <kernel.h>
+-#include <power/reboot.h>
++#include <sys/reboot.h>
+ #include <random/rand32.h>
+ #include <stdio.h>
+ #include <sys/printk.h>
+-- 
+2.17.1
+
+
+From a866dcc5a4c9c275c603f34d02efc3685b0a3b2a Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Wed, 4 May 2022 23:47:22 +0000
+Subject: [PATCH 3/7] fix yolov5 c codegen bool define error
+
+---
+ src/target/source/codegen_c_host.cc | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/target/source/codegen_c_host.cc b/src/target/source/codegen_c_host.cc
+index 0b74a1a1c..2780e16a3 100644
+--- a/src/target/source/codegen_c_host.cc
++++ b/src/target/source/codegen_c_host.cc
+@@ -52,6 +52,7 @@ void CodeGenCHost::Init(bool output_ssa, bool emit_asserts, std::string target_s
+   decl_stream << "#define TVM_EXPORTS\n";
+   decl_stream << "#include \"tvm/runtime/c_runtime_api.h\"\n";
+   decl_stream << "#include \"tvm/runtime/c_backend_api.h\"\n";
++  decl_stream << "#include <stdbool.h>\n";
+   decl_stream << "#include <math.h>\n";
+   if (devices.find("ethos-u") != devices.end()) {
+     decl_stream << "#include <tvm_ethosu_runtime.h>\n";
+-- 
+2.17.1
+
+
+From 50fcfebecf76a773b712389058dfb0c8b3ebd6ad Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Wed, 4 May 2022 23:50:33 +0000
+Subject: [PATCH 4/7] Enable PROFILER ON for microTVM
+
+---
+ apps/microtvm/reference-vm/rebuild-tvm.sh | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/apps/microtvm/reference-vm/rebuild-tvm.sh b/apps/microtvm/reference-vm/rebuild-tvm.sh
+index aca138d87..1e6b2c8b4 100755
+--- a/apps/microtvm/reference-vm/rebuild-tvm.sh
++++ b/apps/microtvm/reference-vm/rebuild-tvm.sh
+@@ -49,6 +49,7 @@ cd "${BUILD_DIR}"
+ sed -i 's/USE_MICRO OFF/USE_MICRO ON/' config.cmake
+ sed -i 's/USE_GRAPH_EXECUTOR_DEBUG OFF/USE_GRAPH_EXECUTOR_DEBUG ON/' config.cmake
+ sed -i 's/USE_LLVM OFF/USE_LLVM ON/' config.cmake
++sed -i 's/USE_PROFILER OFF/USE_PROFILER ON/' config.cmake
+ cmake ..
+ rm -rf standalone_crt host_standalone_crt  # remove stale generated files
+ make -j${num_cores}
+-- 
+2.17.1
+
+
+From 8ab57e40b6df9529c5407055a25bd3721073246b Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Wed, 4 May 2022 23:52:56 +0000
+Subject: [PATCH 5/7] fix python setup.py lib files exist error
+
+---
+ python/setup.py | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/python/setup.py b/python/setup.py
+index 5d21af6b5..6311916b7 100644
+--- a/python/setup.py
++++ b/python/setup.py
+@@ -171,9 +171,12 @@ if wheel_include_libs:
+     with open("MANIFEST.in", "w") as fo:
+         for path in LIB_LIST:
+             if os.path.isfile(path):
+-                shutil.copy(path, os.path.join(CURRENT_DIR, "tvm"))
+-                _, libname = os.path.split(path)
+-                fo.write(f"include tvm/{libname}\n")
++                try :
++                    shutil.copy(path, os.path.join(CURRENT_DIR, "tvm"))
++                    _, libname = os.path.split(path)
++                    fo.write(f"include tvm/{libname}\n")
++                except shutil.SameFileError:
++                    pass
+ 
+             if os.path.isdir(path):
+                 _, libname = os.path.split(path)
+-- 
+2.17.1
+
+
+From f6226b72ad2fa2624a919d210cecbb287581fb42 Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Thu, 5 May 2022 02:54:32 +0000
+Subject: [PATCH 6/7] enable SDRAM support , large main app stack and long RPC
+ timeout for STM32F429i_Disco1
+
+---
+ .../zephyr/template_project/microtvm_api_server.py         | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/apps/microtvm/zephyr/template_project/microtvm_api_server.py b/apps/microtvm/zephyr/template_project/microtvm_api_server.py
+index 248a21d1c..7d2fbd2f8 100644
+--- a/apps/microtvm/zephyr/template_project/microtvm_api_server.py
++++ b/apps/microtvm/zephyr/template_project/microtvm_api_server.py
+@@ -377,6 +377,9 @@ class Handler(server.ProjectAPIHandler):
+                 "CONFIG_RING_BUFFER=y\n"
+                 "CONFIG_UART_CONSOLE=n\n"
+                 "CONFIG_UART_INTERRUPT_DRIVEN=y\n"
++                "CONFIG_MAIN_STACK_SIZE=4096\n"
++                "CONFIG_MEMC=y\n"
++                "CONFIG_SYS_HEAP_BIG_ONLY=y"
+                 "\n"
+             )
+             f.write("# For TVMPlatformAbort().\n" "CONFIG_REBOOT=y\n" "\n")
+@@ -698,8 +701,8 @@ class ZephyrSerialTransport:
+         self._port = serial.Serial(port_path, baudrate=self._lookup_baud_rate(self._options))
+         return server.TransportTimeouts(
+             session_start_retry_timeout_sec=2.0,
+-            session_start_timeout_sec=5.0,
+-            session_established_timeout_sec=5.0,
++            session_start_timeout_sec=10.0,
++            session_established_timeout_sec=3000.0,
+         )
+ 
+     def close(self):
+-- 
+2.17.1
+
+
+From 62e655c43ccdf7734dc2ad278899f365ff4f89cf Mon Sep 17 00:00:00 2001
+From: "roger.lin" <roger.lin@fitipower.com>
+Date: Thu, 5 May 2022 05:45:34 +0000
+Subject: [PATCH 7/7] update main.c for stm32F426i_disco1 SDRAM using
+
+---
+ .../template_project/src/host_driven/main.c   | 26 ++++++++++++++++---
+ 1 file changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/apps/microtvm/zephyr/template_project/src/host_driven/main.c b/apps/microtvm/zephyr/template_project/src/host_driven/main.c
+index 04cb342b1..760f8e3fa 100644
+--- a/apps/microtvm/zephyr/template_project/src/host_driven/main.c
++++ b/apps/microtvm/zephyr/template_project/src/host_driven/main.c
+@@ -275,13 +286,22 @@ void main(void) {
+   gpio_pin_set(led0_pin, LED0_PIN, 1);
+ #endif
+ 
++  k_heap_init(&tvm_heap, tvm_heap_mem, TVM_HEAP_SIZE);
+   // Claim console device.
+   tvm_uart = device_get_binding(DT_LABEL(DT_CHOSEN(zephyr_console)));
+   uart_rx_init(&uart_rx_rbuf, tvm_uart);
+ 
+   // Initialize microTVM RPC server, which will receive commands from the UART and execute them.
+   microtvm_rpc_server_t server = MicroTVMRpcServerInit(write_serial, NULL);
+-  TVMLogf("microTVM Zephyr runtime - running");
++  //
++
++  //TVMLogf("tvm_heap %p tvm_heap_mem %p %p\n", &tvm_heap, tvm_heap_mem, &tvm_heap_mem);
++  k_sleep(K_MSEC(500));
++  TVMLogf("Roger microTVM Zephyr runtime - running");
++  //printk("Roger microTVM Zephyr runtime - running");
++  //p32 = k_heap_alloc(&tvm_heap, 4, K_NO_WAIT);
++  //*p32= 0x888;
++  //TVMLogf("first k_heap_alloc() \tp32 %p *p32 %x\n", p32, *p32);
+ #ifdef CONFIG_LED
+   gpio_pin_set(led0_pin, LED0_PIN, 0);
+ #endif
+-- 
+2.17.1
+
