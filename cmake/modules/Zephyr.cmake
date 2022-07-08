@@ -25,6 +25,7 @@ if(USE_MICRO)
       "apps/microtvm/zephyr/template_project CMakeLists.txt.template -> zephyr"
       "apps/microtvm/zephyr/template_project/src/aot_demo *.c -> zephyr/src/aot_demo"
       "apps/microtvm/zephyr/template_project/src/aot_demo *.h -> zephyr/src/aot_demo"
+      "apps/microtvm/zephyr/template_project/src/aot_demo *.cpp -> zephyr/src/aot_demo"
       "apps/microtvm/zephyr/template_project/src/host_driven *.c -> zephyr/src/host_driven"
       "apps/microtvm/zephyr/template_project/qemu-hack * -> zephyr/qemu-hack"
       "apps/microtvm/zephyr/template_project/crt_config *.h -> zephyr/crt_config"

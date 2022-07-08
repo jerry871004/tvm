@@ -204,7 +204,7 @@ void TVMInfer() {
     TVMLogf("Error: %d\n", ret_val);
     TVMPlatformAbort(kTvmErrorPlatformCheckFailure);
   }
-
+  /*
   size_t max_ind = -1;
   float max_val = -FLT_MAX;
   for (size_t i = 0; i < output_data_len; i++) {
@@ -262,3 +262,5 @@ void main(void) {
   posix_exit(0);
 #endif
 }
+
+

@@ -49,9 +49,22 @@ def test_tflite(temp_dir, board, west_cmd, tvm_debug):
     output_shape = (1, 1575,15)
     build_config = {"debug": tvm_debug}
 
+    #sample_url = "https://github.com/tlc-pack/web-data/raw/967fc387dadb272c5a7f8c3461d34c060100dbf1/testdata      /microTVM/data/keyword_spotting_int8_6.pyc.npy"
+    #sample_path = download_testdata(sample_url, "keyword_spotting_int8_6.pyc.npy", module="data")
+    #sample = np.load(sample_path)
+    #img_url = "https://s3.amazonaws.com/model-server/inputs/kitten.jpg"
+    #img_path = download_testdata(img_url, "imagenet_cat.png", module="data")
+    img_path = '/home/wei/model_file/chair.jpg'
+    # Resize it to 160x160
+    resized_image = Image.open(img_path).resize((160, 160))
+
+    img_data = np.asarray(resized_image).astype("float")
+    img_data = img_data-128
+    img_data = np.asarray(img_data).astype("int8")
+
     #model_url = "https://github.com/tlc-pack/web-data/raw/25fe99fb00329a26bd37d3dca723da94316fd34c/testdata/microTVM/model/keyword_spotting_quant.tflite"
     #model_path = download_testdata(model_url, "keyword_spotting_quant.tflite", module="model")
-    model_path= '/home/roger/tvm/exp87-int8.tflite'
+    model_path= '/home/wei/model_file/exp113_160-int8.tflite'
     # Import TFLite model
     tflite_model_buf = open(model_path, "rb").read()
     try:
@@ -76,14 +89,7 @@ def test_tflite(temp_dir, board, west_cmd, tvm_debug):
     with tvm.transform.PassContext(opt_level=3, config={"tir.disable_vectorize": True}):
         lowered = relay.build(relay_mod, target, params=params, runtime=runtime, executor=executor)
 
-    #sample_url = "https://github.com/tlc-pack/web-data/raw/967fc387dadb272c5a7f8c3461d34c060100dbf1/testdata/microTVM/data/keyword_spotting_int8_6.pyc.npy"
-    #sample_path = download_testdata(sample_url, "keyword_spotting_int8_6.pyc.npy", module="data")
-    #sample = np.load(sample_path)
-    img_url = "https://s3.amazonaws.com/model-server/inputs/kitten.jpg"
-    img_path = download_testdata(img_url, "imagenet_cat.png", module="data")
-    # Resize it to 160x160
-    resized_image = Image.open(img_path).resize((160, 160))
-    img_data = np.asarray(resized_image).astype("int8")
+    
     #print(graph_mod.get_input_info())
     tensor_img_data = np.expand_dims(img_data, axis=0)
 
@@ -107,8 +113,8 @@ def test_tflite(temp_dir, board, west_cmd, tvm_debug):
     )
 
     result, time = test_utils.run_model(project)
-    print("got result:{0}, time:{1}".format(result,time))
-    assert result > 0
+    print("\ngot result:{0}, time:{1}\n".format(result,time))
+    assert time > 0
 
 '''
 @tvm.testing.requires_micro
